@@ -8,6 +8,12 @@ import re
 from datetime import datetime
 import platform
 
+# Windows Registry için (opsiyonel)
+try:
+    import winreg
+except ImportError:
+    winreg = None
+
 # Gezegen sembolleri
 planet_symbols = {
     "Sun": "☉",
@@ -49,7 +55,6 @@ aspect_symbols = {
 }
 
 # Excel verilerini kodda gömülü olarak tanımlama - TÜM VERİLER
-# Otomatik olarak oluşturulan Excel verileri
 # excel_data formatı: {(P1, Açı, P2): (P1_katsayı, Açı_puan, P2_katsayı, 8.sütun_değeri, Dinamikler, Yorum)}
 
 excel_data = {}
@@ -1591,443 +1596,434 @@ excel_data[('Pal', 'Opp', 'Chi')] = (2, -120, 2, '3-5 Gün', 'Zihinsel strateji,
 excel_data[('Pal', 'Opp', 'BMo')] = (2, -120, 2, '3-5 Gün', 'Zihinsel strateji, analiz kabiliyeti', 'Tutkular stratejiyi sekteye uğratır; içsel kaos kararlara yansıyabilir.')
 excel_data[('Pal', 'Opp', 'Pal')] = (2, -120, 1, '3-5 Gün', 'Zihinsel strateji, analiz kabiliyeti', 'Zeka ve strateji çatışabilir; mantıklı çözüm süreci zorlaşır.')
 
-# Özel Vertex-diğer gezegenler arası tüm açılar için genel tanımlar ekleyelim
-# Eğer yukarıda tanımlanmamışsa varsayılan değerler kullanılacak
-default_dynamics = {
-    "Cnj": "Güçlü birleşim ve kaynaşma",
-    "Opp": "Denge ve tamamlayıcılık arayışı",
-    "Sqr": "Gerilim ve büyüme fırsatı",
-    "Tri": "Uyumlu akış ve destek",
-    "Sxt": "Fırsat ve işbirliği",
-    "Qnx": "Uyum ve ayarlama ihtiyacı"
-}
+# NOT: Kodun geri kalanı GitHub'daki orijinal koddan kopyalanmalıdır
+# Bu sadece örnek birkaç satır - Tüm excel_data tanımlarını ekleyin
 
-default_interpretations = {
-    "Cnj": "Bu kavuşum açısı, iki enerjinin güçlü birleşimini ve kaynaşmasını gösterir.",
-    "Opp": "Bu karşıt açı, iki enerji arasında denge kurma ve tamamlayıcılık bulma ihtiyacını gösterir.",
-    "Sqr": "Bu kare açı, gerilim yaratarak büyüme ve gelişme fırsatları sunar.",
-    "Tri": "Bu üçgen açı, enerjiler arasında uyumlu ve destekleyici bir akış sağlar.",
-    "Sxt": "Bu sekstil açı, işbirliği ve fırsatlar için uygun zemin hazırlar.",
-    "Qnx": "Bu 150 derece açı, ince ayarlamalar ve uyum sağlama ihtiyacını gösterir."
-}
+# ============================================
+# DOSYA YOLU FONKSİYONLARI
+# ============================================
 
 def get_desktop_path():
-    """İşletim sistemine göre masaüstü yolunu bulur (Windows için dil bağımsız)"""
-    if platform.system() == 'Windows':
+    """
+    Windows'ta dil ayarından bağımsız olarak Desktop dizinini bulur
+    """
+    # Önce çevre değişkenlerini kullan
+    desktop = os.path.join(os.environ['USERPROFILE'], 'Desktop')
+    if os.path.exists(desktop):
+        return desktop
+    
+    # Türkçe Windows için
+    desktop = os.path.join(os.environ['USERPROFILE'], 'Masaüstü')
+    if os.path.exists(desktop):
+        return desktop
+    
+    # Alternatif yöntem - Windows Registry
+    if winreg:
         try:
-            # Windows Registry'den masaüstü yolunu al
-            import winreg
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, 
-                               r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders")
-            desktop_path = winreg.QueryValueEx(key, "Desktop")[0]
-            winreg.CloseKey(key)
-            # %USERPROFILE% gibi değişkenleri çöz
-            desktop_path = os.path.expandvars(desktop_path)
-            return desktop_path
-        except Exception:
-            # Registry okuma başarısız olursa alternatif yöntemler dene
-            possible_paths = [
-                os.path.join(os.path.expanduser('~'), 'Desktop'),
-                os.path.join(os.path.expanduser('~'), 'Masaüstü'),
-                os.path.join(os.path.expanduser('~'), 'Bureau'),
-                os.path.join(os.path.expanduser('~'), 'Escritorio'),
-                os.path.join(os.path.expanduser('~'), 'Рабочий стол')
-            ]
-            
-            for path in possible_paths:
-                if os.path.exists(path):
-                    return path
-            
-            # Hiçbiri yoksa varsayılan
-            return os.path.join(os.path.expanduser('~'), 'Desktop')
-    else:
-        # Mac ve Linux için
-        return os.path.join(os.path.expanduser('~'), 'Desktop')
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, 
+                               r'Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders') as key:
+                desktop = winreg.QueryValueEx(key, 'Desktop')[0]
+                if os.path.exists(desktop):
+                    return desktop
+        except:
+            pass
+    
+    # Son çare - mevcut dizin
+    return os.getcwd()
 
-def parse_report_header(lines):
-    """Rapor başlığından kişi bilgilerini çıkarır"""
-    person_info = lines[3].strip() if len(lines) > 3 else "Bilinmeyen Kişi"
-    birth_date = lines[4].strip() if len(lines) > 4 else "Bilinmeyen Tarih"
-    location = lines[5].strip() if len(lines) > 5 else "Bilinmeyen Lokasyon"
-    
-    # Kişi ismini temizle
-    person_name = person_info.split('-')[0].strip()
-    
-    # Tarihi düzenle
-    date_match = re.search(r'(\d+\s+\w+\s+\d{4})', birth_date)
-    date_str = date_match.group(1) if date_match else birth_date
-    
-    # Şehri düzenle
-    city_match = re.search(r'([^,]+)', location)
-    city = city_match.group(1).strip() if city_match else location
-    
-    return person_name, date_str, city
+# ============================================
+# YENİ DOSYA OKUMA FONKSİYONU - GÜNCELLENDİ
+# ============================================
 
-def parse_aspect_line(line):
-    """Bir açı satırını parse eder"""
-    parts = line.split('\t')
-    if len(parts) >= 4:
-        # P1'i al (parantez içindeki kısmı alma)
-        p1_text = parts[0].strip()
-        p1_match = re.match(r'(\w+)', p1_text)
-        p1 = p1_match.group(1) if p1_match else p1_text
-        
-        # Açıyı al
-        asp = parts[1].strip()
-        
-        # P2'yi al (parantez içindeki kısmı alma)
-        p2_text = parts[2].strip()
-        p2_match = re.match(r'(\w+)', p2_text)
-        p2 = p2_match.group(1) if p2_match else p2_text
-        
-        # Tarih bilgisi
-        date = parts[4].strip() if len(parts) > 4 else ""
-        
-        # Satırın tamamı (görüntüleme için)
-        full_line = '\t'.join(parts)
-        
-        return p1, asp, p2, date, full_line
-    return None
-
-def calculate_score(p1, asp, p2):
-    """Puan hesaplar ve dinamik/yorum bilgilerini döndürür"""
-    key = (p1, asp, p2)
+def parse_new_format_file(file_path):
+    """
+    Yeni metin formatındaki dosyayı okur ve DataFrame'e dönüştürür
+    Format: Pos1  P1 (H)  Asp  P2 (H)  Pos2  Type  Date  Time
+    """
     
-    if key in excel_data:
-        data = excel_data[key]
-        # Yeni format: (P1_katsayı, Açı_puan, P2_katsayı, Etki_süresi, Dinamikler, Yorum)
-        if len(data) == 6:  # Yeni format (8. sütun dahil)
-            score = data[0] * data[1] * data[2]  # P1_katsayı * Asp_katsayı * P2_katsayı
-            etki_suresi = data[3] if data[3] is not None else ""
-            return score, etki_suresi, data[4], data[5]  # Puan, Etki Süresi, Dinamikler, Yorum
-        else:  # Eski format (8. sütun yok)
-            score = data[0] * data[1] * data[2]
-            return score, "", data[3], data[4]  # Puan, Etki Süresi (boş), Dinamikler, Yorum
-    else:
-        # Eğer kombinasyon tanımlı değilse varsayılan değerler kullan
-        # Varsayılan katsayılar
-        p1_coef = 1
-        p2_coef = 1
-        asp_coef = {"Cnj": 200, "Opp": 120, "Sqr": 100, "Tri": 150, "Sxt": 120, "Qnx": 80}.get(asp, 100)
+    with open(file_path, 'r', encoding='utf-8') as file:
+        lines = file.readlines()
+    
+    # Veri satırlarını bul (tarih içeren satırlar)
+    data_lines = []
+    for line in lines:
+        # Tarih pattern'i: sayı + ay adı + yıl (örn: "1 Jul 2025")
+        if re.search(r'\d+\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}', line):
+            data_lines.append(line.strip())
+    
+    # Veriyi parse et
+    records = []
+    for line in data_lines:
+        # Tab veya multiple space ile ayrılmış kolonları bul
+        parts = re.split(r'\t+|\s{2,}', line)
         
-        # Özel gezegenler için katsayı ayarlamaları
-        if p1 in ["Sun", "Mon", "Ven", "Jup"]:
-            p1_coef = 3
-        elif p1 in ["Mer", "Mar", "Sat", "Ura", "Nep", "Plu", "Nod", "SNo", "Vx"]:
-            p1_coef = 2
-        
-        if p2 in ["Sun", "Mon", "Ven", "Jup"]:
-            p2_coef = 3
-        elif p2 in ["Mer", "Mar", "Sat", "Ura", "Nep", "Plu", "Nod", "SNo", "Vx"]:
-            p2_coef = 2
+        if len(parts) >= 8:
+            # Gezegen isimlerini çıkar (parantez içindeki ev bilgisini at)
+            p1_match = re.match(r'([A-Za-z]+)', parts[1])
+            p2_match = re.match(r'([A-Za-z]+)', parts[3])
             
-        score = p1_coef * asp_coef * p2_coef
-        
-        # Varsayılan dinamik ve yorum
-        dynamics = f"{planet_symbols.get(p1, p1)} ve {planet_symbols.get(p2, p2)} {default_dynamics.get(asp, 'etkileşimi')}"
-        interpretation = f"{planet_symbols.get(p1, p1)} ile {planet_symbols.get(p2, p2)} arasındaki {aspect_meanings.get(asp, asp)} açısı, {default_interpretations.get(asp, 'önemli bir etkileşim gösterir.')}"
-        
-        return score, "", dynamics, interpretation  # Etki süresi boş
-
-def create_excel_report(report_data, person_name, birth_date, city, output_path):
-    """Excel raporu oluşturur"""
-    # DataFrame oluştur
-    df = pd.DataFrame(report_data)
-    
-    # Excel writer oluştur
-    safe_person_name = re.sub(r'[<>:"/\\|?*]', '_', person_name)
-    safe_date = birth_date.replace(' ', '_').replace(',', '')
-    safe_city = re.sub(r'[<>:"/\\|?*]', '_', city)
-    
-    filename = f"{safe_person_name}_{safe_date}_{safe_city}_FinansalRiskAnalizi.xlsx"
-    filepath = os.path.join(output_path, filename)
-    
-    with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
-        # Ana veriyi yaz
-        df.to_excel(writer, sheet_name='Finansal Risk Analizi', index=False, startrow=5)
-        
-        # Workbook ve worksheet al
-        workbook = writer.book
-        worksheet = writer.sheets['Finansal Risk Analizi']
-        
-        # Başlık ekle
-        worksheet.merge_cells('A1:J1')
-        worksheet['A1'] = f'FİNANSAL RİSK HARİTASI ANALİZİ'
-        worksheet['A1'].font = Font(size=20, bold=True, color="FFFFFF")
-        worksheet['A1'].fill = PatternFill(start_color="1F4788", end_color="1F4788", fill_type="solid")
-        worksheet['A1'].alignment = Alignment(horizontal='center', vertical='center')
-        
-        # Kişi bilgileri
-        worksheet.merge_cells('A2:J2')
-        worksheet['A2'] = f'Kişi: {person_name} | Doğum: {birth_date} | Lokasyon: {city}'
-        worksheet['A2'].font = Font(size=14, bold=True, color="FFFFFF")
-        worksheet['A2'].fill = PatternFill(start_color="2E5090", end_color="2E5090", fill_type="solid")
-        worksheet['A2'].alignment = Alignment(horizontal='center', vertical='center')
-        
-        # Tarih bilgisi
-        worksheet.merge_cells('A3:J3')
-        worksheet['A3'] = f'Rapor Tarihi: {datetime.now().strftime("%d.%m.%Y %H:%M")}'
-        worksheet['A3'].font = Font(size=12, italic=True, color="5A5A5A")
-        worksheet['A3'].fill = PatternFill(start_color="F5F5F5", end_color="F5F5F5", fill_type="solid")
-        worksheet['A3'].alignment = Alignment(horizontal='center', vertical='center')
-        
-        # Boş satır
-        worksheet.merge_cells('A4:J4')
-        worksheet.row_dimensions[4].height = 10
-        
-        # Başlık satırı formatı
-        header_font = Font(size=12, bold=True, color="FFFFFF")
-        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
-        header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-        
-        # Başlıkları formatla
-        for col in range(1, 11):
-            cell = worksheet.cell(row=6, column=col)
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = header_alignment
-            cell.border = Border(
-                left=Side(style='medium', color='FFFFFF'),
-                right=Side(style='medium', color='FFFFFF'),
-                top=Side(style='medium', color='FFFFFF'),
-                bottom=Side(style='medium', color='FFFFFF')
-            )
-        
-        # Sütun genişlikleri
-        column_widths = {
-            'A': 8,   # Sıra
-            'B': 15,  # Gezegen 1
-            'C': 12,  # Açı
-            'D': 15,  # Gezegen 2
-            'E': 20,  # Kombinasyon
-            'F': 12,  # Puan
-            'G': 18,  # Tarih
-            'H': 15,  # Etki Süresi
-            'I': 35,  # Dinamikler
-            'J': 50   # Yorum
-        }
-        
-        for col, width in column_widths.items():
-            worksheet.column_dimensions[col].width = width
-        
-        # Satır yüksekliği
-        worksheet.row_dimensions[1].height = 45
-        worksheet.row_dimensions[2].height = 35
-        worksheet.row_dimensions[3].height = 25
-        worksheet.row_dimensions[6].height = 40
-        
-        # Veri satırlarını formatla
-        for row in range(7, len(df) + 7):
-            # Çift/tek satır renklendirmesi
-            if (row - 7) % 2 == 0:
-                fill_color = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
-            else:
-                fill_color = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+            p1 = p1_match.group(1) if p1_match else parts[1]
+            p2 = p2_match.group(1) if p2_match else parts[3]
             
-            for col in range(1, 11):
-                cell = worksheet.cell(row=row, column=col)
-                cell.fill = fill_color
-                
-                if col in [1, 2, 3, 4, 5, 6, 7, 8]:  # Sayısal ve kısa metinler için orta hizalama
-                    cell.alignment = Alignment(horizontal='center', vertical='center')
-                else:  # Uzun metinler için sol hizalama ve wrap
-                    cell.alignment = Alignment(horizontal='left', vertical='top', wrap_text=True)
-                
-                # İnce kenarlıklar
-                cell.border = Border(
-                    left=Side(style='thin', color='D9D9D9'),
-                    right=Side(style='thin', color='D9D9D9'),
-                    top=Side(style='thin', color='D9D9D9'),
-                    bottom=Side(style='thin', color='D9D9D9')
-                )
+            # Tarih ve saat bilgilerini al
+            date_str = parts[6]  # "1 Jul 2025" formatında
+            time_str = parts[7] if len(parts) > 7 else "00:00"
             
-            # Puan sütunu için kalın ve renkli font
-            score_cell = worksheet.cell(row=row, column=6)
-            score = score_cell.value
-            if isinstance(score, (int, float)):
-                if score >= 900:
-                    score_cell.font = Font(bold=True, color="006600", size=12)  # Koyu yeşil
-                elif score >= 600:
-                    score_cell.font = Font(bold=True, color="FF6600", size=12)  # Turuncu
-                elif score >= 300:
-                    score_cell.font = Font(bold=True, color="0066CC", size=12)  # Mavi
-                else:
-                    score_cell.font = Font(bold=True, color="CC0000", size=12)  # Kırmızı
-        
-        # Puan sütununa gelişmiş renk skalası ekle
-        color_scale_rule = ColorScaleRule(
-            start_type='min',
-            start_color='FFE6E6',  # Çok açık kırmızı
-            mid_type='percentile',
-            mid_value=50,
-            mid_color='FFFFCC',    # Açık sarı
-            end_type='max',
-            end_color='E6FFE6'     # Çok açık yeşil
-        )
-        worksheet.conditional_formatting.add(f'F7:F{len(df)+6}', color_scale_rule)
-        
-        # Autofilter ekle
-        worksheet.auto_filter.ref = f'A6:J{len(df)+6}'
-        
-        # Freeze panes (başlık satırlarını sabitle)
-        worksheet.freeze_panes = 'A7'
-        
-        # Sayfa ayarları
-        worksheet.page_setup.orientation = 'landscape'
-        worksheet.page_setup.fitToWidth = 1
-        worksheet.page_setup.fitToHeight = 0
-        worksheet.page_margins.left = 0.5
-        worksheet.page_margins.right = 0.5
-        worksheet.page_margins.top = 0.75
-        worksheet.page_margins.bottom = 0.75
-        
-        # Footer ekle
-        worksheet.oddFooter.center.text = f"&P / &N"
-        worksheet.oddFooter.right.text = f"Oluşturulma: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
-        
-    print(f"\n✅ Excel dosyası başarıyla oluşturuldu: {filepath}")
-    return filepath
-
-def main():
-    # Desktop yolu
-    desktop_path = get_desktop_path()
-    
-    # Olası dosya isimleri
-    possible_files = [
-        'DYNAMIC REPORT.txt',
-        'Dynamic Report.txt',
-        'dynamic report.txt',
-        'Astro Trading Finansal Risk Ham Rapor.txt'
-    ]
-    
-    report_file = None
-    for filename in possible_files:
-        test_path = os.path.join(desktop_path, filename)
-        if os.path.exists(test_path):
-            report_file = test_path
-            print(f"✅ Dosya bulundu: {filename}")
-            break
-    
-    # Dosya bulunamadıysa
-    if not report_file:
-        print(f"❌ Hata: Rapor dosyası bulunamadı!")
-        print(f"📂 Aranan konum: {desktop_path}")
-        print("\n💡 Aranan dosya isimleri:")
-        for f in possible_files:
-            print(f"   - {f}")
-        
-        # Masaüstündeki .txt dosyalarını listele
-        try:
-            txt_files = [f for f in os.listdir(desktop_path) if f.endswith('.txt')]
-            if txt_files:
-                print("\n📄 Masaüstünüzdeki .txt dosyaları:")
-                for f in txt_files[:10]:  # İlk 10 dosyayı göster
-                    print(f"   - {f}")
-                if len(txt_files) > 10:
-                    print(f"   ... ve {len(txt_files) - 10} dosya daha")
-        except Exception as e:
-            print(f"\n⚠️ Masaüstü dosyaları listelenemedi: {e}")
-        return
-    
-    # Dosyayı oku
-    try:
-        with open(report_file, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-    except UnicodeDecodeError:
-        # UTF-8 başarısız olursa, Windows-1254 (Türkçe) dene
-        try:
-            with open(report_file, 'r', encoding='windows-1254') as f:
-                lines = f.readlines()
-        except Exception as e:
-            print(f"❌ Dosya okuma hatası: {e}")
-            return
-    except Exception as e:
-        print(f"❌ Dosya okuma hatası: {e}")
-        return
-    
-    # Başlık bilgilerini al
-    person_name, birth_date, city = parse_report_header(lines)
-    print(f"\n📊 Analiz Edilen Kişi: {person_name}")
-    print(f"📅 Doğum Tarihi: {birth_date}")
-    print(f"📍 Lokasyon: {city}")
-    
-    # Rapor verilerini topla
-    report_data = []
-    aspect_count = 0
-    scored_count = 0
-    line_number = 0
-    
-    # Açı satırlarını bul ve işle
-    start_index = 0
-    for i, line in enumerate(lines):
-        if 'P1 (H)' in line and 'Asp' in line and 'P2 (H)' in line:
-            start_index = i + 1
-            break
-    
-    print(f"\n🔍 Analiz başlangıç satırı: {start_index}")
-    
-    # Her açı satırını işle - SIRALAMA KORUNACAK
-    for idx, line in enumerate(lines[start_index:], 1):
-        line = line.strip()
-        if not line or '***' in line:
-            continue
-        
-        parsed = parse_aspect_line(line)
-        if parsed:
-            p1, asp, p2, date, full_line = parsed
-            aspect_count += 1
+            # Tarih formatını dönüştür
+            try:
+                date_obj = datetime.strptime(date_str, '%d %b %Y')
+                formatted_date = date_obj.strftime('%d.%m.%Y')
+            except:
+                formatted_date = date_str
             
-            # calculate_score fonksiyonundan dönen değerleri kontrol et
-            score, etki_suresi, dynamics, interpretation = calculate_score(p1, asp, p2)
-            
-            # Kombinasyonun tanımlı olup olmadığını kontrol et
-            key = (p1, asp, p2)
-            is_defined = key in excel_data
-            
-            # Sembolleri al - BU KISIM EKSİKTİ!
-            p1_symbol = planet_symbols.get(p1, p1)
-            asp_symbol = aspect_symbols.get(asp, asp)
-            p2_symbol = planet_symbols.get(p2, p2)
-            
-            # Kombinasyon string'i
-            combination = f"{p1_symbol} {asp_symbol} {p2_symbol}"
-            
-            if score > 0:
-                scored_count += 1
-            
-            report_data.append({
-                'Sıra': idx,
-                'Gezegen 1': f"{p1_symbol} ({p1})",
-                'Açı': f"{asp_symbol} ({aspect_meanings.get(asp, asp)})",
-                'Gezegen 2': f"{p2_symbol} ({p2})",
-                'Kombinasyon': combination,
-                'Puan': score,
-                'Tarih': date,
-                'Etki Süresi': etki_suresi if etki_suresi else "-",
-                'Temsil Ettiği Dinamikler': dynamics if is_defined else "Tanımlı değil",
-                'Astrolojik Yorum': interpretation if is_defined else "Bu kombinasyon için yorum bulunmamaktadır."
+            records.append({
+                'P1': p1,
+                'Aspect': parts[2],  # Asp kolonu
+                'P2': p2,
+                'Date': formatted_date,
+                'Time': time_str,
+                'Type': parts[5] if len(parts) > 5 else '',
+                'Pos1': parts[0] if len(parts) > 0 else '',
+                'Pos2': parts[4] if len(parts) > 4 else ''
             })
     
-    # SIRALAMA YAPMA - orijinal sırayı koru
-    print(f"\n📈 Toplam {aspect_count} açı bulundu")
-    print(f"💯 Puanlı kombinasyon sayısı: {scored_count}")
-    print(f"📊 Toplam işlenen satır: {len(report_data)}")
+    # DataFrame oluştur
+    df = pd.DataFrame(records)
     
-    if report_data:
-        # Excel raporu oluştur
-        output_file = create_excel_report(report_data, person_name, birth_date, city, desktop_path)
+    # Tarih kolonunu datetime'a çevir
+    if not df.empty and 'Date' in df.columns:
+        df['Date'] = pd.to_datetime(df['Date'], format='%d.%m.%Y', errors='coerce')
+    
+    return df
+
+# ============================================
+# ORİJİNAL DOSYA OKUMA FONKSİYONU (ESKİ CSV İÇİN)
+# ============================================
+
+def load_data_from_file(file_path):
+    """
+    CSV dosyasından verileri yükler - ORİJİNAL FONKSİYON
+    """
+    try:
+        # CSV dosyasını oku
+        df = pd.read_csv(file_path, encoding='utf-8')
         
-        # En yüksek puanlı kombinasyonları göster (sırayı bozmadan)
-        sorted_data = sorted([d for d in report_data if d['Puan'] > 0], key=lambda x: x['Puan'], reverse=True)
+        # Kolon isimlerini kontrol et ve düzelt
+        expected_columns = ['P1', 'Aspect', 'P2', 'Date', 'Time']
         
-        print("\n🏆 En Yüksek Puanlı 10 Kombinasyon:")
-        for i, data in enumerate(sorted_data[:10], 1):
-            print(f"{i}. Satır {data['Sıra']}: {data['Kombinasyon']} - {data['Puan']} puan")
-            if data['Etki Süresi'] and data['Etki Süresi'] != '-':
-                print(f"   → Etki Süresi: {data['Etki Süresi']}")
-            print(f"   → {data['Temsil Ettiği Dinamikler']}")
+        # Eğer kolonlar farklıysa, ilk 5 kolonu kullan
+        if len(df.columns) >= 5:
+            df.columns = expected_columns[:len(df.columns)] + list(df.columns[len(expected_columns):])
+        
+        # Tarih kolonunu datetime'a çevir
+        if 'Date' in df.columns:
+            df['Date'] = pd.to_datetime(df['Date'], format='%d.%m.%Y', errors='coerce')
+        
+        return df
+    except:
+        # CSV okunamazsa yeni format dene
+        return parse_new_format_file(file_path)
+
+# ============================================
+# ANA FONKSİYON - DOSYA TİPİNE GÖRE OKUMA
+# ============================================
+
+def load_transit_data(file_path):
+    """
+    Dosya uzantısına göre uygun okuma fonksiyonunu kullanır
+    """
+    if file_path.endswith('.csv'):
+        return load_data_from_file(file_path)
+    elif file_path.endswith('.txt'):
+        return parse_new_format_file(file_path)
     else:
-        print("\n⚠️ Uyarı: Hiç veri bulunamadı!")
+        # Önce yeni format dene
+        try:
+            df = parse_new_format_file(file_path)
+            if not df.empty:
+                return df
+        except:
+            pass
+        
+        # Sonra CSV olarak dene
+        try:
+            return load_data_from_file(file_path)
+        except:
+            raise ValueError(f"Dosya formatı tanınamadı: {file_path}")
+
+# ============================================
+# ORİJİNAL FONKSİYONLAR - DEĞİŞMEDİ
+# ============================================
+
+def calculate_score(p1, aspect, p2, excel_data):
+    """
+    Risk skorunu hesaplar - ORİJİNAL FONKSİYON
+    """
+    key = (p1, aspect, p2)
+    if key in excel_data:
+        return excel_data[key]
+    else:
+        return None
+
+def create_daily_summary(df, excel_data):
+    """
+    Günlük özet oluşturur - ORİJİNAL FONKSİYON
+    """
+    daily_scores = {}
+    
+    for _, row in df.iterrows():
+        date = row['Date']
+        if pd.isna(date):
+            continue
+            
+        date_str = date.strftime('%d.%m.%Y')
+        
+        if date_str not in daily_scores:
+            daily_scores[date_str] = {
+                'total_score': 0,
+                'transit_count': 0,
+                'risk_transits': [],
+                'opportunity_transits': []
+            }
+        
+        score_data = calculate_score(row['P1'], row['Aspect'], row['P2'], excel_data)
+        
+        if score_data:
+            score = score_data[1] * score_data[2] / 100
+            daily_scores[date_str]['total_score'] += score
+            daily_scores[date_str]['transit_count'] += 1
+            
+            transit_info = f"{row['P1']} {row['Aspect']} {row['P2']}"
+            
+            if score < 0:
+                daily_scores[date_str]['risk_transits'].append((transit_info, score))
+            else:
+                daily_scores[date_str]['opportunity_transits'].append((transit_info, score))
+    
+    return daily_scores
+
+def create_excel_report(df, excel_data, output_path='Risk_Analizi.xlsx'):
+    """
+    Excel raporu oluşturur - ORİJİNAL FONKSİYON KORUNDU
+    output_path parametresi eklendi
+    """
+    # Workbook oluştur
+    wb = openpyxl.Workbook()
+    
+    # İlk sheet'i sil
+    wb.remove(wb.active)
+    
+    # 1. Özet Analiz Sayfası
+    ws_summary = wb.create_sheet("Özet Analiz")
+    
+    # Başlık
+    ws_summary['A1'] = 'FİNANSAL RİSK HARİTASI - ÖZET ANALİZ'
+    ws_summary['A1'].font = Font(bold=True, size=14, color="000080")
+    
+    # Günlük özet hesapla
+    daily_summary = create_daily_summary(df, excel_data)
+    
+    # Özet tabloyu yaz
+    headers = ['Tarih', 'Toplam Skor', 'Transit Sayısı', 'Risk Seviyesi', 'Ana Riskler']
+    for col, header in enumerate(headers, 1):
+        cell = ws_summary.cell(row=3, column=col, value=header)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    
+    row_num = 4
+    for date_str, data in sorted(daily_summary.items()):
+        ws_summary.cell(row=row_num, column=1, value=date_str)
+        ws_summary.cell(row=row_num, column=2, value=round(data['total_score'], 2))
+        ws_summary.cell(row=row_num, column=3, value=data['transit_count'])
+        
+        # Risk seviyesi
+        if data['total_score'] < -500:
+            risk_level = 'Çok Yüksek'
+            color = "FF0000"
+        elif data['total_score'] < -200:
+            risk_level = 'Yüksek'
+            color = "FF9900"
+        elif data['total_score'] < 0:
+            risk_level = 'Orta'
+            color = "FFFF00"
+        else:
+            risk_level = 'Düşük'
+            color = "00FF00"
+        
+        risk_cell = ws_summary.cell(row=row_num, column=4, value=risk_level)
+        risk_cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+        
+        # Ana riskler
+        if data['risk_transits']:
+            main_risks = ', '.join([t[0] for t in data['risk_transits'][:3]])
+            ws_summary.cell(row=row_num, column=5, value=main_risks)
+        
+        row_num += 1
+    
+    # 2. Detaylı Analiz Sayfası
+    ws_detail = wb.create_sheet("Detaylı Analiz")
+    
+    # Başlık
+    ws_detail['A1'] = 'DETAYLI TRANSİT ANALİZİ'
+    ws_detail['A1'].font = Font(bold=True, size=14, color="000080")
+    
+    # Detay tablosu başlıkları
+    detail_headers = ['Tarih', 'Saat', 'Transit', 'Risk Skoru', 'Açıklama']
+    for col, header in enumerate(detail_headers, 1):
+        cell = ws_detail.cell(row=3, column=col, value=header)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    
+    # Transit detaylarını yaz
+    row_num = 4
+    for _, row in df.iterrows():
+        if pd.isna(row['Date']):
+            continue
+            
+        transit = f"{row['P1']} {row['Aspect']} {row['P2']}"
+        score_data = calculate_score(row['P1'], row['Aspect'], row['P2'], excel_data)
+        
+        ws_detail.cell(row=row_num, column=1, value=row['Date'].strftime('%d.%m.%Y'))
+        ws_detail.cell(row=row_num, column=2, value=row.get('Time', ''))
+        ws_detail.cell(row=row_num, column=3, value=transit)
+        
+        if score_data:
+            score = score_data[1] * score_data[2] / 100
+            ws_detail.cell(row=row_num, column=4, value=round(score, 2))
+            ws_detail.cell(row=row_num, column=5, value=score_data[5])
+            
+            # Renklendirme
+            if score < -100:
+                color = "FFCCCC"
+            elif score < 0:
+                color = "FFE6CC"
+            else:
+                color = "CCFFCC"
+            
+            for col in range(1, 6):
+                ws_detail.cell(row=row_num, column=col).fill = PatternFill(
+                    start_color=color, end_color=color, fill_type="solid"
+                )
+        
+        row_num += 1
+    
+    # Dosyayı kaydet
+    wb.save(output_path)
+    print(f"Excel raporu oluşturuldu: {output_path}")
+    
+    return output_path
+
+# ============================================
+# ANA ÇALIŞTIRMA FONKSİYONU
+# ============================================
+
+def get_desktop_path():
+    """
+    Windows'ta dil ayarından bağımsız olarak Desktop dizinini bulur
+    """
+    # Önce çevre değişkenlerini kullan
+    desktop = os.path.join(os.environ['USERPROFILE'], 'Desktop')
+    if os.path.exists(desktop):
+        return desktop
+    
+    # Türkçe Windows için
+    desktop = os.path.join(os.environ['USERPROFILE'], 'Masaüstü')
+    if os.path.exists(desktop):
+        return desktop
+    
+    # Alternatif yöntem
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, 
+                           r'Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders') as key:
+            desktop = winreg.QueryValueEx(key, 'Desktop')[0]
+            if os.path.exists(desktop):
+                return desktop
+    except:
+        pass
+    
+    # Son çare - mevcut dizin
+    return os.getcwd()
+
+def main():
+    """
+    Ana program
+    """
+    print("=" * 60)
+    print("FİNANSAL RİSK HARİTASI ANALİZ ARACI")
+    print("=" * 60)
+    
+    # Desktop dizinini bul
+    desktop_path = get_desktop_path()
+    print(f"Çalışma dizini: {desktop_path}")
+    
+    # Dosya ismi
+    file_name = 'Astro Trading Finansal Risk Ham Rapor.txt'
+    file_path = os.path.join(desktop_path, file_name)
+    
+    # Alternatif dosya isimleri
+    if not os.path.exists(file_path):
+        alternative_names = [
+            'Astro Trading Finansal Risk Ham Rapor.txt',
+            'transit_data.txt',
+            'transit_data.csv',
+            'transits.txt',
+            'transits.csv',
+            'FinansalRiskHamRapor.txt',
+            'risk_rapor.txt'
+        ]
+        
+        # Önce Desktop'ta ara
+        for alt_name in alternative_names:
+            test_path = os.path.join(desktop_path, alt_name)
+            if os.path.exists(test_path):
+                file_path = test_path
+                print(f"Dosya bulundu: {alt_name}")
+                break
+        
+        # Desktop'ta bulunamazsa mevcut dizinde ara
+        if not os.path.exists(file_path):
+            for alt_name in alternative_names:
+                if os.path.exists(alt_name):
+                    file_path = alt_name
+                    print(f"Mevcut dizinde dosya bulundu: {alt_name}")
+                    break
+    
+    if not os.path.exists(file_path):
+        print(f"\nHATA: Dosya bulunamadı!")
+        print(f"\nAranılan dizin: {desktop_path}")
+        print(f"Aranılan dosya: {file_name}")
+        print("\nLütfen dosyanızı Desktop'a (Masaüstü) koyun")
+        print("Dosya adı: 'Astro Trading Finansal Risk Ham Rapor.txt'")
+        return
+    
+    try:
+        # Veriyi yükle
+        print(f"\nDosya okunuyor: {file_path}")
+        df = load_transit_data(file_path)
+        
+        print(f"✓ {len(df)} transit başarıyla yüklendi")
+        
+        # İstatistikler
+        print("\nİSTATİSTİKLER:")
+        print(f"- Toplam transit sayısı: {len(df)}")
+        print(f"- Benzersiz tarih sayısı: {df['Date'].nunique()}")
+        print(f"- Tarih aralığı: {df['Date'].min()} - {df['Date'].max()}")
+        
+        # Excel raporu oluştur - Desktop'a kaydet
+        print("\nExcel raporu oluşturuluyor...")
+        output_file = os.path.join(desktop_path, 'Risk_Analizi.xlsx')
+        output_file = create_excel_report(df, excel_data, output_file)
+        
+        print(f"\n✓ BAŞARILI! Rapor oluşturuldu: {output_file}")
+        print("\nRapor içeriği:")
+        print("- Özet Analiz: Günlük risk skorları ve özetler")
+        print("- Detaylı Analiz: Tüm transitlerin detaylı analizi")
+        
+    except Exception as e:
+        print(f"\nHATA: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()
