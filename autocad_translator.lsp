@@ -131,10 +131,12 @@
     (progn
       (setq url (strcat "https://generativelanguage.googleapis.com/v1beta/models/" *GEMINI-MODEL* ":generateContent?key=" *GEMINI-API-KEY*))
 
-      ;; Construct the prompt specifically for technical translation
-      (setq prompt (strcat "Translate the following technical engineering text from English to Turkish. "
-                           "Use precise technical terminology. "
-                           "Return ONLY the translated text. Do not include markdown formatting or explanations. "
+      ;; Construct the prompt specifically for technical translation and language detection
+      (setq prompt (strcat "You are an expert technical translator for engineering drawings. "
+                           "Identify the language of the following text. "
+                           "If it is already in Turkish, return it EXACTLY as is. "
+                           "If it is in any other language, translate it to Turkish using precise technical terminology. "
+                           "Return ONLY the final Turkish text. Do not include markdown formatting, explanations, or quotes around the result. "
                            "Text: " text-to-translate))
 
       ;; JSON Payload construction
@@ -190,44 +192,91 @@
 )
 
 ;;; -------------------------------------------------------------------------
-;;; MAIN COMMAND: TRGEMINI
-;;; Selects text objects and translates them.
+;;; HELPER: Check if Layer is Locked
 ;;; -------------------------------------------------------------------------
-(defun c:TRGEMINI ( / ss i ent obj oldText newText count)
-  (princ "\nSelect Text or MText objects to translate (English -> Technical Turkish)...")
-  (setq ss (ssget '((0 . "TEXT,MTEXT"))))
+(defun is-layer-locked (doc layerName / layers layerObj locked)
+  (setq layers (vla-get-layers doc))
+  (if (not (vl-catch-all-error-p (vl-catch-all-apply 'vla-item (list layers layerName))))
+    (progn
+      (setq layerObj (vla-item layers layerName))
+      (setq locked (vla-get-lock layerObj))
+      (= locked :vlax-true)
+    )
+    nil ; Layer not found? Should not happen for existing objects.
+  )
+)
+
+;;; -------------------------------------------------------------------------
+;;; MAIN COMMAND: TRGEMINI
+;;; Selects ALL text objects and translates them.
+;;; -------------------------------------------------------------------------
+(defun c:TRGEMINI ( / ss i ent obj oldText newText count total choice doc layerName)
+
+  (princ "\nSelecting ALL Text and MText objects in the drawing...")
+  (setq ss (ssget "_X" '((0 . "TEXT,MTEXT"))))
+  (setq doc (vla-get-activedocument (vlax-get-acad-object)))
 
   (if ss
     (progn
-      (setq count 0)
-      (setq i 0)
-      (while (< i (sslength ss))
-        (setq ent (ssname ss i))
-        (setq obj (vlax-ename->vla-object ent))
-        (setq oldText (vla-get-textstring obj))
+      (setq total (sslength ss))
+      (initget "Yes No")
+      (setq choice (getkword (strcat "\nFound " (itoa total) " text objects. This will process ALL of them. Are you sure? [Yes/No] <No>: ")))
 
-        (princ (strcat "\nTranslating: " oldText "..."))
+      (if (= choice "Yes")
+        (progn
+          ;; Start Undo Group
+          (vla-StartUndoMark doc)
 
-        ;; Call API
-        (setq newText (call-gemini oldText))
+          (setq count 0)
+          (setq i 0)
+          (while (< i total)
+            (setq ent (ssname ss i))
+            (setq obj (vlax-ename->vla-object ent))
+            (setq oldText (vla-get-textstring obj))
+            (setq layerName (vla-get-layer obj))
 
-        (if (and newText (/= newText ""))
-          (progn
-            (vla-put-textstring obj newText)
-            (princ " Done.")
-            (setq count (1+ count))
+            ;; Check if layer is locked
+            (if (is-layer-locked doc layerName)
+              (princ (strcat "\n[" (itoa (1+ i)) "/" (itoa total) "] Skipped (Locked Layer: " layerName ")."))
+              ;; Simple filter: Skip empty text or very short text to save API calls
+              (if (> (strlen oldText) 1)
+                (progn
+                   (princ (strcat "\n[" (itoa (1+ i)) "/" (itoa total) "] Processing: " (substr oldText 1 (min 20 (strlen oldText))) "..."))
+
+                   ;; Call API
+                   (setq newText (call-gemini oldText))
+
+                   (if (and newText (/= newText "") (/= newText oldText))
+                     (progn
+                       (vla-put-textstring obj newText)
+                       (princ " -> Translated.")
+                       (setq count (1+ count))
+                     )
+                     (if (= newText oldText)
+                        (princ " -> Skipped (Same/Turkish).")
+                        (princ " -> Failed.")
+                     )
+                   )
+                )
+                (princ (strcat "\n[" (itoa (1+ i)) "/" (itoa total) "] Skipped (Empty/Short)."))
+              )
+            )
+
+            (setq i (1+ i))
           )
-          (princ " Failed.")
-        )
 
-        (setq i (1+ i))
+          ;; End Undo Group
+          (vla-EndUndoMark doc)
+
+          (alert (strcat "Process Complete.\n" (itoa count) " objects translated out of " (itoa total) " found."))
+        )
+        (princ "\nOperation cancelled.")
       )
-      (alert (strcat "Translation Complete.\n" (itoa count) " objects translated."))
     )
-    (princ "\nNo text objects selected.")
+    (princ "\nNo text objects found in the drawing.")
   )
   (princ)
 )
 
-(princ "\nType TRGEMINI to start the translation.")
+(princ "\nType TRGEMINI to translate ALL text in the drawing to Technical Turkish.")
 (princ)
