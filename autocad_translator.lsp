@@ -5,7 +5,7 @@
 ;;; -------------------------------------------------------------------------
 ;;; Please replace "YOUR_GEMINI_API_KEY_HERE" with your actual Google Gemini API Key.
 (setq *GEMINI-API-KEY* "YOUR_GEMINI_API_KEY_HERE")
-(setq *GEMINI-MODEL* "gemini-1.5-flash") ; or gemini-pro
+(setq *GEMINI-MODEL* "gemini-3-pro")
 
 ;;; -------------------------------------------------------------------------
 ;;; HELPER: Escape String for JSON
