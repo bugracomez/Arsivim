@@ -1,0 +1,98 @@
+//@version=5
+indicator("8 Kriterli Özel Strateji (Düzeltilmiş)", overlay=true)
+
+// --- Girdiler (Ayarlar) ---
+rsi_len = input.int(14, "RSI Uzunluğu")
+vol_avg_len = input.int(20, "Hacim Ortalaması (Gün)")
+ma_len = input.int(20, "Fiyat MA Uzunluğu")
+atr_len = input.int(14, "ATR Uzunluğu")
+atr_ma_len = input.int(5, "ATR Ortalaması (Gün)")
+stoch_len = input.int(14, "Stoch Uzunluğu")
+stoch_k_smooth = input.int(3, "Stoch %K Düzleştirme")
+stoch_d_smooth = input.int(3, "Stoch %D Düzleştirme")
+obv_ma_len = input.int(10, "OBV Ortalaması")
+strict_cross = input.bool(false, "MACD ve OBV için 'Anlık Kesişim' Zorunlu Olsun mu?")
+
+// --- 1. RSI: 50-70 Arasında ---
+rsiVal = ta.rsi(close, rsi_len)
+cond_rsi = rsiVal >= 50 and rsiVal <= 70
+
+// --- 2. Hacim: Günlük hacim, 20 günlük ortalamanın 1.5 katı ---
+volAvg = ta.sma(volume, vol_avg_len)
+cond_vol = volume > (volAvg * 1.5)
+
+// --- 3. Fiyat: Kapanış MA20 Üzerinde ---
+ma20 = ta.sma(close, ma_len)
+cond_price = close > ma20
+
+// --- 4. MACD: Sinyal çizgisini yukarı kesmiş ---
+[macdLine, signalLine, _] = ta.macd(close, 12, 26, 9)
+cond_macd = strict_cross ? ta.crossover(macdLine, signalLine) : (macdLine > signalLine)
+
+// --- 5. Volatilite: ATR, 5 günlük ortalamadan %20 yüksek ---
+atrVal = ta.atr(atr_len)
+atrAvg = ta.sma(atrVal, atr_ma_len)
+cond_atr = atrVal > (atrAvg * 1.20)
+
+// --- 6. Bollinger Bantları: Fiyat, orta band ile üst band arasında ---
+[bbMid, bbUpper, bbLower] = ta.bb(close, 20, 2)
+cond_bb = close > bbMid and close < bbUpper
+
+// --- 7. Stochastic: %K 50-80 arasında, %D'yi yukarı kesmiş ---
+// Düzeltme: ta.stoch sadece ham veriyi verir, düzleştirmeyi (smooth) biz yaparız.
+k_raw = ta.stoch(close, high, low, stoch_len) 
+k = ta.sma(k_raw, stoch_k_smooth) // %K Çizgisi
+d = ta.sma(k, stoch_d_smooth)     // %D Çizgisi
+
+cond_stoch_range = k >= 50 and k <= 80
+cond_stoch_cross = ta.crossover(k, d)
+cond_stoch = cond_stoch_range and cond_stoch_cross
+
+// --- 8. OBV: 10 günlük ortalamayı yukarı kesmiş ---
+// Düzeltme: ta.obv parametre almaz, hazır değişkendir.
+obvVal = ta.obv
+obvAvg = ta.sma(obvVal, obv_ma_len)
+cond_obv = strict_cross ? ta.crossover(obvVal, obvAvg) : (obvVal > obvAvg)
+
+// --- TÜM KOŞULLARIN BİRLEŞİMİ ---
+buySignal = cond_rsi and cond_vol and cond_price and cond_macd and cond_atr and cond_bb and cond_stoch and cond_obv
+
+// --- Görselleştirme ---
+plotshape(buySignal, title="AL Sinyali", location=location.belowbar, color=color.green, style=shape.labelup, text="AL")
+
+// Bollinger Bantlarını çizelim
+plot(bbUpper, color=color.new(color.blue, 80), title="BB Upper")
+plot(bbMid, color=color.new(color.orange, 0), title="BB Mid (MA20)")
+
+// --- Alarm Kurulumu ---
+alertcondition(buySignal, title="8 Kriterli AL", message="Tüm koşullar sağlandı! {{ticker}} için AL sinyali.")
+
+// --- Bilgi Tablosu ---
+if barstate.islast
+    var table t = table.new(position.top_right, 2, 9, border_width=1)
+    table.cell(t, 0, 0, "Koşul", bgcolor=color.gray, text_color=color.white)
+    table.cell(t, 1, 0, "Durum", bgcolor=color.gray, text_color=color.white)
+    
+    table.cell(t, 0, 1, "1. RSI (50-70)")
+    table.cell(t, 1, 1, str.tostring(math.round(rsiVal, 2)), bgcolor = cond_rsi ? color.green : color.red)
+    
+    table.cell(t, 0, 2, "2. Hacim (>1.5x)")
+    table.cell(t, 1, 2, cond_vol ? "OK" : "Düşük", bgcolor = cond_vol ? color.green : color.red)
+    
+    table.cell(t, 0, 3, "3. Fiyat > MA20")
+    table.cell(t, 1, 3, cond_price ? "OK" : "Altında", bgcolor = cond_price ? color.green : color.red)
+    
+    table.cell(t, 0, 4, "4. MACD")
+    table.cell(t, 1, 4, cond_macd ? "Pozitif" : "Negatif", bgcolor = cond_macd ? color.green : color.red)
+
+    table.cell(t, 0, 5, "5. ATR (Volatilite)")
+    table.cell(t, 1, 5, cond_atr ? "Yüksek" : "Düşük", bgcolor = cond_atr ? color.green : color.red)
+
+    table.cell(t, 0, 6, "6. BB Konumu")
+    table.cell(t, 1, 6, cond_bb ? "OK" : "Dışında", bgcolor = cond_bb ? color.green : color.red)
+
+    table.cell(t, 0, 7, "7. Stoch Kesişim")
+    table.cell(t, 1, 7, cond_stoch ? "KESİŞİM" : "Bekliyor", bgcolor = cond_stoch ? color.green : color.gray)
+
+    table.cell(t, 0, 8, "8. OBV")
+    table.cell(t, 1, 8, cond_obv ? "Pozitif" : "Negatif", bgcolor = cond_obv ? color.green : color.red)
